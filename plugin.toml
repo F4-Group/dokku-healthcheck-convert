@@ -1,0 +1,4 @@
+[plugin]
+description = "Convert CHECKS file to app.json"
+version = "0.1.0"
+[plugin.config]
