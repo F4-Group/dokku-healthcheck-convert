@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -eo pipefail; [[ $DOKKU_TRACE ]] && set -x
+source "$PLUGIN_ENABLED_PATH/common/functions"
+APP="$1"
+SOURCECODE_WORK_DIR="$2"
+
+verify_app_name "$APP"
+
+if [[ ! -x "/usr/bin/docker-container-healthchecker" ]]; then
+  dokku_log_fail "Missing docker-container-healthchecker, install it"
+  return 1
+fi
+
+APP_SOURCE_IMAGE="$(plugn trigger git-get-property "$APP" "source-image")"
+
+# work only with source code
+if [[ ! -n "$APP_SOURCE_IMAGE" ]]; then
+  dokku_log_info1 "Running dokku-healthcheck-convert"
+  pushd "$SOURCECODE_WORK_DIR" >/dev/null
+
+  if [[ -f "CHECKS" ]] && [[ ! -f "app.json" ]]; then
+      dokku_log_info1 "Converting CHECKS file to app.json"
+      GENERATED_APP_JSON=$(/usr/bin/docker-container-healthchecker convert CHECKS --pretty)
+      APP_CONTENT=$(echo "$GENERATED_APP_JSON" | jq '.healthchecks.web[0]')
+      FINAL_JSON=$(echo "$APP_CONTENT" | jq '. * {name:"from-CHECKS-file"}')
+      TRIMMED_CONTENT=$(echo "$APP_CONTENT" | jq --raw-output '.content' | sed 's/^\s\+\|\s\+$//g')
+      FINAL_JSON=$(echo "$FINAL_JSON" | jq --arg content "${TRIMMED_CONTENT}" '. * {content: $content}')
+      ATTEMPTS=$(echo "$APP_CONTENT" | jq '.attempts // 6')
+      FINAL_JSON=$(echo "$FINAL_JSON" | jq --argjson attempts "${ATTEMPTS}" '. * {attempts: $attempts}')
+
+      echo "{\"healthchecks\":{\"web\":[${FINAL_JSON}]}}" > app.json
+
+      dokku_log_info1 "app.json content:"
+      cat app.json
+      rm -f CHECKS
+  fi
+
+  popd &>/dev/null
+fi
